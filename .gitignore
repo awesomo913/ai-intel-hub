@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+sessions.json
+profiles.json
+email_config.json
+config.json
+exports/
+data/
+.claude/
