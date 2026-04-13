@@ -1,6 +1,7 @@
 """RSS feed parser and web scraper with retry logic."""
 
 import logging
+import random
 import re
 import time
 import warnings
@@ -318,13 +319,61 @@ def scrape_github_trending() -> list[dict]:
     return unique
 
 
-def scrape_github_deep() -> list[dict]:
-    """Deep GitHub scan - trending (all, daily, weekly), language-specific,
-    and topic-specific searches. Returns deduplicated results."""
-    all_repos = {}
+GITHUB_DEEP_WORKERS = 4
+GITHUB_JITTER_MIN = 0.3
+GITHUB_JITTER_MAX = 1.2
 
-    # 1. Trending pages (overall + by timeframe)
-    trending_urls = [
+
+def _fetch_github_page_with_jitter(url: str,
+                                   session: requests.Session) -> list[dict]:
+    """Fetch a single GitHub page with anti-rate-limit jitter.
+    Returns list of parsed repos (may be empty on error)."""
+    time.sleep(random.uniform(GITHUB_JITTER_MIN, GITHUB_JITTER_MAX))
+    try:
+        resp = session.get(url, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            logger.debug("GitHub %d for %s", resp.status_code, url)
+            return []
+
+        # Topic pages have a different structure than trending
+        if "/topics/" in url:
+            return _parse_topic_page(resp.text)
+        return _parse_github_page(resp.text)
+    except requests.RequestException as e:
+        logger.debug("GitHub fetch error for %s: %s", url, e)
+        return []
+
+
+def _parse_topic_page(html: str) -> list[dict]:
+    """Parse a GitHub /topics/ page."""
+    soup = BeautifulSoup(html, "html.parser")
+    repos = []
+    for article in soup.select("article"):
+        name_el = article.select_one("h3 a")
+        desc_el = article.select_one("p")
+        if not name_el:
+            continue
+        name = name_el.get_text(strip=True).replace("\n", "").replace(" ", "")
+        desc = desc_el.get_text(strip=True) if desc_el else ""
+        href = name_el.get("href", "")
+        if href and href.count("/") >= 2:
+            repo_url = f"https://github.com{href}" if not href.startswith("http") else href
+            stars_el = (article.select_one("[aria-label*='star']")
+                        or article.select_one("span.Counter"))
+            stars = stars_el.get_text(strip=True).replace(",", "") if stars_el else "0"
+            repos.append({
+                "name": name, "description": desc,
+                "url": repo_url, "stars": stars, "language": "",
+            })
+    return repos
+
+
+def scrape_github_deep() -> list[dict]:
+    """Deep GitHub scan — parallel with jitter rate limiting.
+    Uses requests.Session for TCP pooling, ThreadPoolExecutor(4 workers),
+    and random 0.3-1.2s jitter per request to prevent 403 blocks."""
+    all_urls = [
+        # 1. Trending pages (7)
         "https://github.com/trending?since=daily&spoken_language_code=en",
         "https://github.com/trending?since=weekly&spoken_language_code=en",
         "https://github.com/trending/python?since=daily",
@@ -332,20 +381,7 @@ def scrape_github_deep() -> list[dict]:
         "https://github.com/trending/typescript?since=daily",
         "https://github.com/trending/rust?since=daily",
         "https://github.com/trending/jupyter-notebook?since=weekly",
-    ]
-
-    for url in trending_urls:
-        try:
-            resp = requests.get(url, timeout=REQUEST_TIMEOUT,
-                                headers={"User-Agent": USER_AGENT})
-            if resp.status_code == 200:
-                for repo in _parse_github_page(resp.text):
-                    all_repos[repo["url"]] = repo
-        except Exception as e:
-            logger.debug("GitHub trending page error for %s: %s", url, e)
-
-    # 2. GitHub topic pages for AI
-    topic_urls = [
+        # 2. Topic pages (12)
         "https://github.com/topics/llm",
         "https://github.com/topics/ai-agents",
         "https://github.com/topics/machine-learning",
@@ -360,57 +396,39 @@ def scrape_github_deep() -> list[dict]:
         "https://github.com/topics/mcp",
     ]
 
-    for url in topic_urls:
-        try:
-            resp = requests.get(url, timeout=REQUEST_TIMEOUT,
-                                headers={"User-Agent": USER_AGENT})
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for article in soup.select("article"):
-                    name_el = article.select_one("h3 a")
-                    desc_el = article.select_one("p")
-                    if not name_el:
-                        continue
-                    name = name_el.get_text(strip=True).replace("\n", "").replace(" ", "")
-                    desc = desc_el.get_text(strip=True) if desc_el else ""
-                    href = name_el.get("href", "")
-                    if href and href.count("/") >= 2:
-                        repo_url = f"https://github.com{href}" if not href.startswith("http") else href
-                        stars_el = article.select_one("[aria-label*='star']") or article.select_one("span.Counter")
-                        stars = stars_el.get_text(strip=True).replace(",", "") if stars_el else "0"
-                        all_repos[repo_url] = {
-                            "name": name,
-                            "description": desc,
-                            "url": repo_url,
-                            "stars": stars,
-                            "language": "",
-                        }
-        except Exception as e:
-            logger.debug("GitHub topic page error for %s: %s", url, e)
-
-    # 3. GitHub search API (no auth needed for basic search)
+    # 3. Search pages (8)
     search_queries = [
-        "llm agent framework",
-        "ai coding assistant",
-        "local llm inference",
-        "rag pipeline",
-        "mcp server",
-        "ai automation tool",
-        "fine-tuning lora",
-        "vibe coding",
+        "llm agent framework", "ai coding assistant",
+        "local llm inference", "rag pipeline",
+        "mcp server", "ai automation tool",
+        "fine-tuning lora", "vibe coding",
     ]
+    for q in search_queries:
+        all_urls.append(
+            f"https://github.com/search?q={q.replace(' ', '+')}&type=repositories&s=stars&o=desc"
+        )
 
-    for query in search_queries:
-        try:
-            search_url = f"https://github.com/search?q={query.replace(' ', '+')}&type=repositories&s=stars&o=desc"
-            resp = requests.get(search_url, timeout=REQUEST_TIMEOUT,
-                                headers={"User-Agent": USER_AGENT})
-            if resp.status_code == 200:
-                for repo in _parse_github_page(resp.text):
-                    all_repos[repo["url"]] = repo
-        except Exception as e:
-            logger.debug("GitHub search error for '%s': %s", query, e)
+    all_repos = {}
+
+    with requests.Session() as session:
+        session.headers.update({"User-Agent": USER_AGENT})
+
+        with ThreadPoolExecutor(max_workers=GITHUB_DEEP_WORKERS) as executor:
+            futures = {
+                executor.submit(_fetch_github_page_with_jitter, url, session): url
+                for url in all_urls
+            }
+
+            for future in as_completed(futures):
+                url = futures[future]
+                try:
+                    repos = future.result()
+                    for repo in repos:
+                        all_repos[repo["url"]] = repo
+                except Exception as e:
+                    logger.debug("GitHub deep scan error for %s: %s", url, e)
 
     result = list(all_repos.values())
-    logger.info("Deep GitHub scan found %d AI repos", len(result))
+    logger.info("Deep GitHub scan found %d AI repos from %d pages (parallel)",
+                len(result), len(all_urls))
     return result

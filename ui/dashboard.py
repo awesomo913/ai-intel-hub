@@ -10,95 +10,96 @@ from ..analyzer import (get_trending_keywords, get_category_trends,
 
 
 class DashboardView(ctk.CTkScrollableFrame):
-    """Main dashboard with standouts, groundbreaker, stats, and trends."""
+    """Main dashboard with standouts, groundbreaker, stats, and trends.
+    Refactored to Builder Pattern."""
 
     def __init__(self, master, theme: dict, on_article_click=None, **kwargs):
         super().__init__(master, fg_color=theme["bg"], corner_radius=0, **kwargs)
+        self._init_state(theme, on_article_click)
+        self._build_ui()
+
+    def _init_state(self, theme: dict, on_article_click):
         self._theme = theme
         self._on_article_click = on_article_click
         self._stat_cards = {}
 
-        # Header
+    def _build_ui(self):
+        self._build_header()
+        self._build_stat_cards()
+        self._build_groundbreaker_section()
+        self._build_standouts_section()
+        self._build_trends_section()
+        self._build_hot_topics_section()
+        self._build_keywords_section()
+        self._build_recent_section()
+
+    def _build_header(self):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(20, 10))
-        ctk.CTkLabel(
-            header, text="Dashboard", font=FONTS["heading_lg"],
-            text_color=theme["fg"]
-        ).pack(side="left")
+        ctk.CTkLabel(header, text="Dashboard", font=FONTS["heading_lg"],
+                     text_color=self._theme["fg"]).pack(side="left")
 
-        # Stats row
+    def _build_stat_cards(self):
+        t = self._theme
         self.stats_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.stats_frame.pack(fill="x", padx=20, pady=10)
 
         stat_defs = [
-            ("total", "Total Articles", "0", theme["accent"]),
-            ("unread", "Unread", "0", theme["info"]),
-            ("today", "Today", "0", theme["success"]),
-            ("bookmarked", "Bookmarked", "0", theme["warning"]),
+            ("total", "Total Articles", "0", t["accent"]),
+            ("unread", "Unread", "0", t["info"]),
+            ("today", "Today", "0", t["success"]),
+            ("bookmarked", "Bookmarked", "0", t["warning"]),
             ("sources", "Active Sources", "0", "#cc5de8"),
             ("strategies", "Strategies", "0", "#20c997"),
         ]
         for i, (key, label, val, color) in enumerate(stat_defs):
-            card = StatCard(
-                self.stats_frame, label=label, value=val, color=color,
-                fg_color=theme["bg_card"]
-            )
+            card = StatCard(self.stats_frame, label=label, value=val, color=color,
+                            fg_color=t["bg_card"])
             card.grid(row=0, column=i, padx=6, pady=6, sticky="nsew")
             self._stat_cards[key] = card
             self.stats_frame.columnconfigure(i, weight=1)
 
-        # === GROUNDBREAKER ===
-        ctk.CTkLabel(
-            self, text="\U0001F4A5 GROUNDBREAKER - Check This Now",
-            font=("Segoe UI", 18, "bold"), text_color="#ff922b", anchor="w"
-        ).pack(fill="x", padx=20, pady=(20, 8))
-
-        self.groundbreaker_frame = ctk.CTkFrame(self, fg_color=theme["bg_card"], corner_radius=12,
+    def _build_groundbreaker_section(self):
+        t = self._theme
+        ctk.CTkLabel(self, text="\U0001F4A5 GROUNDBREAKER - Check This Now",
+                     font=("Segoe UI", 18, "bold"), text_color="#ff922b", anchor="w"
+                     ).pack(fill="x", padx=20, pady=(20, 8))
+        self.groundbreaker_frame = ctk.CTkFrame(self, fg_color=t["bg_card"], corner_radius=12,
                                                  border_width=2, border_color="#ff922b")
         self.groundbreaker_frame.pack(fill="x", padx=20, pady=(0, 15))
 
-        # === TOP 5 STANDOUTS ===
-        ctk.CTkLabel(
-            self, text="\U0001F31F Top 5 Standouts - Must Read",
-            font=("Segoe UI", 18, "bold"), text_color="#fcc419", anchor="w"
-        ).pack(fill="x", padx=20, pady=(10, 8))
-
+    def _build_standouts_section(self):
+        ctk.CTkLabel(self, text="\U0001F31F Top 5 Standouts - Must Read",
+                     font=("Segoe UI", 18, "bold"), text_color="#fcc419", anchor="w"
+                     ).pack(fill="x", padx=20, pady=(10, 8))
         self.standouts_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.standouts_frame.pack(fill="x", padx=20, pady=(0, 15))
 
-        # Category trends
-        ctk.CTkLabel(
-            self, text="Category Trends (7 days)", font=FONTS["heading"],
-            text_color=theme["fg"], anchor="w"
-        ).pack(fill="x", padx=20, pady=(15, 8))
-
-        self.trends_frame = ctk.CTkFrame(self, fg_color=theme["bg_card"], corner_radius=12)
+    def _build_trends_section(self):
+        t = self._theme
+        ctk.CTkLabel(self, text="Category Trends (7 days)", font=FONTS["heading"],
+                     text_color=t["fg"], anchor="w").pack(fill="x", padx=20, pady=(15, 8))
+        self.trends_frame = ctk.CTkFrame(self, fg_color=t["bg_card"], corner_radius=12)
         self.trends_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        # Hot topics
-        ctk.CTkLabel(
-            self, text="Hot Topics", font=FONTS["heading"],
-            text_color=theme["fg"], anchor="w"
-        ).pack(fill="x", padx=20, pady=(10, 8))
-
-        self.hot_frame = ctk.CTkFrame(self, fg_color=theme["bg_card"], corner_radius=12)
+    def _build_hot_topics_section(self):
+        t = self._theme
+        ctk.CTkLabel(self, text="Hot Topics", font=FONTS["heading"],
+                     text_color=t["fg"], anchor="w").pack(fill="x", padx=20, pady=(10, 8))
+        self.hot_frame = ctk.CTkFrame(self, fg_color=t["bg_card"], corner_radius=12)
         self.hot_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        # Trending keywords
-        ctk.CTkLabel(
-            self, text="Trending Keywords", font=FONTS["heading"],
-            text_color=theme["fg"], anchor="w"
-        ).pack(fill="x", padx=20, pady=(10, 8))
-
-        self.keywords_frame = ctk.CTkFrame(self, fg_color=theme["bg_card"], corner_radius=12)
+    def _build_keywords_section(self):
+        t = self._theme
+        ctk.CTkLabel(self, text="Trending Keywords", font=FONTS["heading"],
+                     text_color=t["fg"], anchor="w").pack(fill="x", padx=20, pady=(10, 8))
+        self.keywords_frame = ctk.CTkFrame(self, fg_color=t["bg_card"], corner_radius=12)
         self.keywords_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        # Recent articles
-        ctk.CTkLabel(
-            self, text="Recent Articles", font=FONTS["heading"],
-            text_color=theme["fg"], anchor="w"
-        ).pack(fill="x", padx=20, pady=(10, 8))
-
+    def _build_recent_section(self):
+        t = self._theme
+        ctk.CTkLabel(self, text="Recent Articles", font=FONTS["heading"],
+                     text_color=t["fg"], anchor="w").pack(fill="x", padx=20, pady=(10, 8))
         self.recent_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.recent_frame.pack(fill="x", padx=20, pady=(0, 20))
 

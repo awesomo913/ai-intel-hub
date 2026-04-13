@@ -1,5 +1,8 @@
-"""Email module - compose and send intelligence reports via SMTP or mailto."""
+"""Email module - compose and send intelligence reports via SMTP or mailto.
+Credentials stored securely via OS keychain (Windows Credential Manager,
+macOS Keychain, Linux Secret Service)."""
 
+import json
 import logging
 import smtplib
 import webbrowser
@@ -10,6 +13,9 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+import keyring
+import keyring.errors
+
 from . import database as db
 from .exporter import articles_to_markdown, articles_to_text
 from .strategy import get_strategy_summary
@@ -18,11 +24,45 @@ from .platform_utils import get_data_dir
 logger = logging.getLogger(__name__)
 
 SMTP_CONFIG_FILE = "email_config.json"
+KEYRING_SERVICE = "AIIntelHub_SMTP"
 
+
+# --- Secure Credential Storage ---
+
+def save_smtp_credential(username: str, password: str) -> None:
+    """Store SMTP password securely in the OS keychain."""
+    try:
+        keyring.set_password(KEYRING_SERVICE, username, password)
+        logger.info("SMTP credential stored in OS keychain for %s", username)
+    except Exception as e:
+        logger.error("Keychain storage failed: %s", e)
+
+
+def get_smtp_credential(username: str) -> Optional[str]:
+    """Retrieve SMTP password from the OS keychain."""
+    if not username:
+        return None
+    try:
+        return keyring.get_password(KEYRING_SERVICE, username)
+    except Exception as e:
+        logger.error("Keychain retrieval failed: %s", e)
+        return None
+
+
+def delete_smtp_credential(username: str) -> None:
+    """Remove SMTP password from the OS keychain."""
+    try:
+        keyring.delete_password(KEYRING_SERVICE, username)
+    except keyring.errors.PasswordDeleteError:
+        pass
+    except Exception as e:
+        logger.debug("Keychain delete: %s", e)
+
+
+# --- Non-Sensitive Config (JSON) ---
 
 def _get_email_config() -> dict:
-    """Load saved email config."""
-    import json
+    """Load saved email config (no password - that's in the keychain)."""
     path = get_data_dir() / SMTP_CONFIG_FILE
     if path.exists():
         try:
@@ -33,8 +73,15 @@ def _get_email_config() -> dict:
 
 
 def save_email_config(config: dict) -> None:
-    """Save email config (SMTP settings + defaults)."""
-    import json
+    """Save email config. Password is routed to OS keychain, not JSON."""
+    username = config.get("username", "")
+    password = config.pop("password", "")
+
+    # Store password in OS keychain, not on disk
+    if username and password:
+        save_smtp_credential(username, password)
+
+    # Save only non-sensitive fields to JSON
     path = get_data_dir() / SMTP_CONFIG_FILE
     path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
@@ -209,12 +256,13 @@ def send_via_smtp(to: str, subject: str, body: str,
                   smtp_server: str = "", smtp_port: int = 587,
                   username: str = "", password: str = "",
                   from_addr: str = "") -> tuple[bool, str]:
-    """Send email via SMTP. Returns (success, message)."""
+    """Send email via SMTP. Password retrieved from OS keychain."""
     config = _get_email_config()
     smtp_server = smtp_server or config.get("smtp_server", "smtp.gmail.com")
     smtp_port = smtp_port or config.get("smtp_port", 587)
     username = username or config.get("username", "")
-    password = password or config.get("password", "")
+    # Retrieve password from OS keychain (not JSON)
+    password = password or get_smtp_credential(username) or ""
     from_addr = from_addr or config.get("from_addr", username)
 
     if not all([smtp_server, username, password, to]):

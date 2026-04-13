@@ -1,4 +1,5 @@
-"""Feed view - browse, search, filter, and read articles."""
+"""Feed view - browse, search, filter, and read articles.
+Refactored to Builder Pattern."""
 
 import webbrowser
 import customtkinter as ctk
@@ -12,97 +13,94 @@ class FeedView(ctk.CTkFrame):
 
     def __init__(self, master, theme: dict, **kwargs):
         super().__init__(master, fg_color=theme["bg"], corner_radius=0, **kwargs)
+        self._init_state(theme)
+        self._build_ui()
+
+    def _init_state(self, theme: dict):
         self._theme = theme
         self._current_search = ""
         self._current_category = ""
         self._current_page = 0
         self._page_size = 30
         self._selected_article = None
+        self._bookmark_var = ctk.BooleanVar(value=False)
+        self._unread_var = ctk.BooleanVar(value=False)
 
-        # Header
+    def _build_ui(self):
+        self._build_header()
+        self._build_search_filters()
+        self._build_content_area()
+        self._build_pagination()
+
+    def _build_header(self):
+        t = self._theme
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(20, 10))
-        ctk.CTkLabel(
-            header, text="Articles", font=FONTS["heading_lg"],
-            text_color=theme["fg"]
-        ).pack(side="left")
-
-        self.count_label = ctk.CTkLabel(
-            header, text="", font=FONTS["body"],
-            text_color=theme["fg_muted"]
-        )
+        ctk.CTkLabel(header, text="Articles", font=FONTS["heading_lg"],
+                     text_color=t["fg"]).pack(side="left")
+        self.count_label = ctk.CTkLabel(header, text="", font=FONTS["body"],
+                                         text_color=t["fg_muted"])
         self.count_label.pack(side="right")
 
-        # Search bar
+    def _build_search_filters(self):
+        t = self._theme
         self.search_bar = SearchBar(
             self, placeholder="Search articles...",
-            on_search=self._on_search, fg_color=theme["bg_secondary"]
+            on_search=self._on_search, fg_color=t["bg_secondary"]
         )
         self.search_bar.pack(fill="x", padx=20, pady=(0, 8))
 
-        # Category filter
-        categories = list(CATEGORY_COLORS.keys())
         self.cat_filter = CategoryFilter(
-            self, categories=categories,
+            self, categories=list(CATEGORY_COLORS.keys()),
             on_select=self._on_category
         )
         self.cat_filter.pack(fill="x", padx=20, pady=(0, 8))
 
-        # Quick filters
         qf = ctk.CTkFrame(self, fg_color="transparent")
         qf.pack(fill="x", padx=20, pady=(0, 10))
-
-        self._bookmark_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             qf, text="Bookmarked only", variable=self._bookmark_var,
             font=FONTS["body_sm"], command=self.refresh,
             checkbox_height=18, checkbox_width=18
         ).pack(side="left", padx=(0, 15))
-
-        self._unread_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             qf, text="Unread only", variable=self._unread_var,
             font=FONTS["body_sm"], command=self.refresh,
             checkbox_height=18, checkbox_width=18
         ).pack(side="left")
 
-        # Content area: article list (left) + detail (right)
+    def _build_content_area(self):
+        t = self._theme
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=20, pady=(0, 10))
         content.columnconfigure(0, weight=3)
         content.columnconfigure(1, weight=2)
         content.rowconfigure(0, weight=1)
 
-        # Article list
         self.list_frame = ctk.CTkScrollableFrame(
-            content, fg_color=theme["bg_secondary"], corner_radius=12
+            content, fg_color=t["bg_secondary"], corner_radius=12
         )
         self.list_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
-        # Detail panel
         self.detail_frame = ctk.CTkScrollableFrame(
-            content, fg_color=theme["bg_card"], corner_radius=12
+            content, fg_color=t["bg_card"], corner_radius=12
         )
         self.detail_frame.grid(row=0, column=1, sticky="nsew")
-
         self._show_detail_placeholder()
 
-        # Pagination
+    def _build_pagination(self):
+        t = self._theme
         pager = ctk.CTkFrame(self, fg_color="transparent")
         pager.pack(fill="x", padx=20, pady=(0, 10))
-
         self.prev_btn = ctk.CTkButton(
             pager, text="\u25C0 Previous", font=FONTS["button"],
             width=100, command=self._prev_page
         )
         self.prev_btn.pack(side="left")
-
         self.page_label = ctk.CTkLabel(
-            pager, text="Page 1", font=FONTS["body"],
-            text_color=theme["fg_muted"]
+            pager, text="Page 1", font=FONTS["body"], text_color=t["fg_muted"]
         )
         self.page_label.pack(side="left", padx=20)
-
         self.next_btn = ctk.CTkButton(
             pager, text="Next \u25B6", font=FONTS["button"],
             width=100, command=self._next_page
