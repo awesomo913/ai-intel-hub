@@ -231,7 +231,7 @@ class AIIntelHub(ctk.CTk):
         )
         self.status_label.pack(side="left", padx=12)
 
-        # Health indicator
+        # Live stats labels (right side, built right-to-left)
         self.health_dot = ctk.CTkLabel(
             self.status_bar, text="\u25CF", font=("Segoe UI", 10),
             text_color=t["success"]
@@ -244,6 +244,34 @@ class AIIntelHub(ctk.CTk):
         )
         self.health_label.pack(side="right", padx=(0, 2))
 
+        # SMS config indicator
+        self._sms_status_lbl = ctk.CTkLabel(
+            self.status_bar, text="SMS: --",
+            font=FONTS["body_sm"], text_color=t["fg_muted"]
+        )
+        self._sms_status_lbl.pack(side="right", padx=(0, 8))
+
+        # SMTP config indicator
+        self._smtp_status_lbl = ctk.CTkLabel(
+            self.status_bar, text="SMTP: --",
+            font=FONTS["body_sm"], text_color=t["fg_muted"]
+        )
+        self._smtp_status_lbl.pack(side="right", padx=(0, 8))
+
+        # Article count
+        self._article_count_lbl = ctk.CTkLabel(
+            self.status_bar, text="Articles: 0",
+            font=FONTS["body_sm"], text_color=t["fg_muted"]
+        )
+        self._article_count_lbl.pack(side="right", padx=(0, 8))
+
+        # Active sources count
+        self._sources_count_lbl = ctk.CTkLabel(
+            self.status_bar, text="Sources: 0",
+            font=FONTS["body_sm"], text_color=t["fg_muted"]
+        )
+        self._sources_count_lbl.pack(side="right", padx=(0, 8))
+
         self.progress_bar = ctk.CTkProgressBar(
             self.status_bar, width=150, height=8,
             progress_color=t["accent"]
@@ -253,6 +281,7 @@ class AIIntelHub(ctk.CTk):
 
         # Update health periodically
         self._update_health_indicator()
+        self._update_status_bar_stats()
 
     def _update_health_indicator(self):
         try:
@@ -274,6 +303,36 @@ class AIIntelHub(ctk.CTk):
             pass
         # Refresh every 5 minutes
         self.after(300000, self._update_health_indicator)
+
+    def _update_status_bar_stats(self):
+        """Update live stats in the status bar (article count, sources, SMTP/SMS config)."""
+        try:
+            stats = db.get_stats()
+            t = self._theme
+            self._article_count_lbl.configure(
+                text=f"Articles: {stats['total_articles']}"
+            )
+            self._sources_count_lbl.configure(
+                text=f"Sources: {stats['active_sources']}"
+            )
+            # SMTP config check
+            from ..emailer import _get_email_config
+            cfg = _get_email_config()
+            smtp_ok = bool(cfg.get("username") and cfg.get("smtp_server"))
+            self._smtp_status_lbl.configure(
+                text=f"SMTP: {'✅' if smtp_ok else '⚠️'}",
+                text_color=t["success"] if smtp_ok else t["warning"]
+            )
+            # SMS config check
+            sms_ok = bool(cfg.get("sms_phone") and cfg.get("sms_carrier"))
+            self._sms_status_lbl.configure(
+                text=f"SMS: {'✅' if sms_ok else '⚠️'}",
+                text_color=t["success"] if sms_ok else t["warning"]
+            )
+        except Exception:
+            pass
+        # Refresh every 60 seconds
+        self.after(60000, self._update_status_bar_stats)
 
     def _create_views(self):
         t = self._theme
@@ -598,15 +657,37 @@ class AIIntelHub(ctk.CTk):
         self.bind("<Control-f>", lambda e: self._focus_search())
         self.bind("<Control-h>", lambda e: self._show_view("health"))
         self.bind("<Control-m>", lambda e: self._show_view("email"))
+        self.bind("<Control-t>", lambda e: self._send_sms_shortcut())
+        self.bind("<Control-p>", lambda e: self._preview_selected())
         self.bind("<Control-Key-1>", lambda e: self._show_view("feed"))
         self.bind("<Control-Key-2>", lambda e: self._show_view("strategies"))
         self.bind("<Control-Key-3>", lambda e: self._show_view("sources"))
         self.bind("<Control-Key-4>", lambda e: self._show_view("settings"))
+        self.bind("<Escape>", lambda e: self._escape_action())
         self.bind("<F5>", lambda e: self._refresh_current())
 
     def _focus_search(self):
         self._show_view("feed")
         self._views["feed"].search_bar.entry.focus_set()
+
+    def _send_sms_shortcut(self):
+        """Ctrl+T: switch to email view and trigger SMS send."""
+        self._show_view("email")
+        self._views["email"].send_sms_alert()
+
+    def _preview_selected(self):
+        """Ctrl+P: switch to feed view to see article preview."""
+        self._show_view("feed")
+
+    def _escape_action(self):
+        """Escape: clear search or return to feed."""
+        feed = self._views.get("feed")
+        if feed and hasattr(feed, "search_bar"):
+            try:
+                feed.search_bar.entry.delete(0, "end")
+                feed._on_search("")
+            except Exception:
+                pass
 
     def _refresh_current(self):
         for view in self._views.values():
