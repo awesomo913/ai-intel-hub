@@ -1,5 +1,53 @@
 """Curated catalog of 50+ AI news sources - RSS feeds and scrape targets."""
 
+# Source credibility weights for scoring.
+# Tier 1 (1.2x): Primary research sources
+# Tier 2 (1.0x): Major tech news
+# Tier 3 (0.8x): Aggregators and newsletters
+SOURCE_WEIGHTS: dict[str, float] = {
+    # Tier 1
+    "arxiv.org": 1.2,
+    "openai.com": 1.2,
+    "deepmind.com": 1.2,
+    "deepmind.google": 1.2,
+    "anthropic.com": 1.2,
+    "research.google": 1.2,
+    "blog.google": 1.2,
+    # Tier 2
+    "techcrunch.com": 1.0,
+    "venturebeat.com": 1.0,
+    "theverge.com": 1.0,
+    "arstechnica.com": 1.0,
+    "wired.com": 1.0,
+    "technologyreview.com": 1.0,
+    "news.ycombinator.com": 1.0,
+    "github.com": 1.0,
+    "huggingface.co": 1.0,
+    "paperswithcode.com": 1.0,
+    "reddit.com": 1.0,
+    # Tier 3
+    "substack.com": 0.8,
+    "beehiiv.com": 0.8,
+    "newsletter": 0.8,
+    "medium.com": 0.8,
+    "towardsdatascience.com": 0.8,
+    "producthunt.com": 0.8,
+    "cbinsights.com": 0.8,
+    "aibusiness.com": 0.8,
+    "theneurondaily.com": 0.8,
+}
+
+
+def get_source_weight(url: str) -> float:
+    """Return the credibility weight (0.8–1.2) for a given source URL."""
+    if not url:
+        return 1.0
+    url_lower = url.lower()
+    for domain, weight in SOURCE_WEIGHTS.items():
+        if domain in url_lower:
+            return weight
+    return 1.0
+
 # Each source: (name, website_url, feed_url, category)
 DEFAULT_SOURCES = [
     # === MAJOR AI NEWS (8) ===

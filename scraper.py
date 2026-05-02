@@ -103,6 +103,15 @@ def fetch_source(source: dict, max_articles: int = 50,
         if not title or not link:
             continue
 
+        # Title similarity dedup: skip if too similar to a recent article
+        try:
+            from .analyzer import is_duplicate_title
+            if is_duplicate_title(title):
+                logger.debug("Skipping duplicate title: %s", title[:60])
+                continue
+        except Exception:
+            pass
+
         summary = ""
         if hasattr(entry, "summary"):
             summary = _clean_html(entry.summary)

@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from . import database as db
+from .sources import get_source_weight
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ HIGH_SIGNAL_KEYWORDS = [
 ]
 
 
-def classify_article(title: str, summary: str) -> tuple[str, float]:
+def classify_article(title: str, summary: str, source_url: str = "") -> tuple[str, float]:
     """Classify an article into a category and compute relevance score.
     Returns (category, relevance_score)."""
     text = f"{title} {summary}".lower()
@@ -89,7 +90,12 @@ def classify_article(title: str, summary: str) -> tuple[str, float]:
 
     # Normalize to 0-1 range
     relevance = min(1.0, (raw_score / 5.0) + signal_boost)
-    return (best_category, round(relevance, 2))
+
+    # Apply source credibility weight
+    weight = get_source_weight(source_url)
+    relevance = min(1.0, round(relevance * weight, 2))
+
+    return (best_category, relevance)
 
 
 def score_all_unscored() -> int:
@@ -99,30 +105,109 @@ def score_all_unscored() -> int:
         # Use is_scored flag if column exists, fall back to old heuristic
         try:
             rows = conn.execute(
-                "SELECT id, title, summary FROM articles WHERE is_scored = 0"
+                """SELECT a.id, a.title, a.summary, s.url as source_url
+                   FROM articles a
+                   LEFT JOIN sources s ON a.source_id = s.id
+                   WHERE a.is_scored = 0"""
             ).fetchall()
         except Exception:
             rows = conn.execute(
-                "SELECT id, title, summary FROM articles WHERE category = '' OR relevance_score = 0.5"
+                """SELECT a.id, a.title, a.summary, s.url as source_url
+                   FROM articles a
+                   LEFT JOIN sources s ON a.source_id = s.id
+                   WHERE a.category = '' OR a.relevance_score = 0.5"""
             ).fetchall()
+
+        # Load feedback keywords once for all articles
+        liked_kws, disliked_kws = db.get_feedback_keywords()
 
         count = 0
         for row in rows:
-            category, score = classify_article(row["title"], row["summary"])
+            source_url = row["source_url"] or ""
+            category, score = classify_article(row["title"], row["summary"], source_url)
+
+            # Apply feedback adjustments
+            text = f"{row['title']} {row['summary']}".lower()
+            if liked_kws:
+                like_hits = sum(1 for kw in liked_kws if kw in text)
+                score = min(1.0, score + like_hits * 0.01)
+            if disliked_kws:
+                dislike_hits = sum(1 for kw in disliked_kws if kw in text)
+                score = max(0.0, score - dislike_hits * 0.01)
+
             try:
                 conn.execute(
                     "UPDATE articles SET category = ?, relevance_score = ?, is_scored = 1 WHERE id = ?",
-                    (category, score, row["id"])
+                    (category, round(score, 2), row["id"])
                 )
             except Exception:
                 conn.execute(
                     "UPDATE articles SET category = ?, relevance_score = ? WHERE id = ?",
-                    (category, score, row["id"])
+                    (category, round(score, 2), row["id"])
                 )
             count += 1
         conn.commit()
         logger.info("Scored %d articles", count)
         return count
+    finally:
+        conn.close()
+
+
+def get_keyword_velocity(keyword: str, hours_back: int = 24) -> float:
+    """Compare keyword frequency in last 24h vs prior 24h window.
+    Returns a ratio clamped to [0.5, 2.0]. A keyword that doubled → 2.0x."""
+    conn = db.get_connection()
+    try:
+        now = datetime.now()
+        recent_start = (now - timedelta(hours=hours_back)).strftime("%Y-%m-%d %H:%M:%S")
+        prior_start = (now - timedelta(hours=hours_back * 2)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Escape LIKE special characters to prevent pattern injection
+        safe_kw = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pattern = f"%{safe_kw}%"
+
+        recent_count = conn.execute(
+            """SELECT COUNT(*) FROM articles
+               WHERE (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')
+               AND fetched_at >= ?""",
+            (like_pattern, like_pattern, recent_start)
+        ).fetchone()[0]
+
+        prior_count = conn.execute(
+            """SELECT COUNT(*) FROM articles
+               WHERE (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')
+               AND fetched_at >= ? AND fetched_at < ?""",
+            (like_pattern, like_pattern, prior_start, recent_start)
+        ).fetchone()[0]
+
+        if prior_count == 0:
+            return 1.0 if recent_count == 0 else 2.0
+        ratio = recent_count / prior_count
+        return max(0.5, min(2.0, ratio))
+    finally:
+        conn.close()
+
+
+def titles_are_similar(t1: str, t2: str, threshold: float = 0.6) -> bool:
+    """Check if two article titles overlap enough to be considered duplicates."""
+    words1 = set(t1.lower().split())
+    words2 = set(t2.lower().split())
+    overlap = len(words1 & words2) / max(len(words1 | words2), 1)
+    return overlap >= threshold
+
+
+def is_duplicate_title(title: str, hours_back: int = 48) -> bool:
+    """Return True if a similar title already exists in the DB within the given window."""
+    conn = db.get_connection()
+    try:
+        cutoff = (datetime.now() - timedelta(hours=hours_back)).strftime("%Y-%m-%d %H:%M:%S")
+        rows = conn.execute(
+            "SELECT title FROM articles WHERE fetched_at >= ?", (cutoff,)
+        ).fetchall()
+        for row in rows:
+            if titles_are_similar(title, row["title"]):
+                return True
+        return False
     finally:
         conn.close()
 
@@ -335,10 +420,15 @@ def get_standouts(limit: int = 5, days: int = 3) -> list[dict]:
 
 def get_groundbreaker(days: int = 7) -> dict | None:
     """Find THE single most groundbreaking article - the one thing you must check.
-    Looks for the highest concentration of breakthrough signals."""
+    Hardened criteria:
+    - Must be published within last 12 hours (freshness gate)
+    - Score >= 0.75 (quality gate)
+    - Not already flagged as groundbreaker in last 6 hours (novelty gate)
+    Falls back gracefully if no article meets all gates."""
     conn = db.get_connection()
     try:
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        fresh_cutoff = (datetime.now() - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
             """SELECT a.*, s.name as source_name FROM articles a
                LEFT JOIN sources s ON a.source_id = s.id
@@ -377,23 +467,36 @@ def get_groundbreaker(days: int = 7) -> dict | None:
                 best["groundbreaker_score"] = round(score, 3)
                 best["signal_hits"] = hits
 
-        # If no strong groundbreaker, pick highest-scored article with any signal
-        if not best:
-            for row in rows[:20]:
-                a = dict(row)
-                text = f"{a.get('title', '')} {a.get('summary', '')}".lower()
-                hits = sum(1 for s in GROUNDBREAKER_SIGNALS if s in text)
-                if hits >= 1:
-                    a["groundbreaker_score"] = _compute_standout_score(a)
-                    a["signal_hits"] = hits
-                    return a
+        # Apply hardened gates if a strong candidate was found
+        if best:
+            article_id = best.get("id")
+            fetched_at = best.get("fetched_at", "")
+            passes_freshness = fetched_at >= fresh_cutoff if fetched_at else False
+            passes_quality = best_score >= 0.75
+            passes_novelty = not db.any_groundbreaker_recent(hours=6)
 
-            # Last resort: just the highest relevance article
-            a = dict(rows[0])
-            a["groundbreaker_score"] = a.get("relevance_score", 0.5)
-            a["signal_hits"] = 0
-            return a
+            if passes_freshness and passes_quality and passes_novelty:
+                if article_id:
+                    db.log_groundbreaker(article_id)
+                return best
 
-        return best
+        # Fallback: look for any article with freshness + signals (no strict quality gate)
+        for row in rows[:50]:
+            a = dict(row)
+            fetched_at = a.get("fetched_at", "")
+            if fetched_at < cutoff:
+                continue
+            text = f"{a.get('title', '')} {a.get('summary', '')}".lower()
+            hits = sum(1 for s in GROUNDBREAKER_SIGNALS if s in text)
+            if hits >= 1:
+                a["groundbreaker_score"] = _compute_standout_score(a)
+                a["signal_hits"] = hits
+                return a
+
+        # Last resort: just the highest relevance article
+        a = dict(rows[0])
+        a["groundbreaker_score"] = a.get("relevance_score", 0.5)
+        a["signal_hits"] = 0
+        return a
     finally:
         conn.close()

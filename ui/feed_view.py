@@ -322,6 +322,45 @@ class FeedView(ctk.CTkFrame):
                 command=lambda: self._fetch_full_text(article)
             ).pack(side="left")
 
+        # Feedback row
+        feedback_row = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        feedback_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        ctk.CTkLabel(
+            feedback_row, text="Feedback:", font=FONTS["body_sm"],
+            text_color=t["fg_muted"]
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            feedback_row, text="👍 Like", width=80, height=30,
+            font=FONTS["button"], corner_radius=8, fg_color=t["success"],
+            command=lambda: self._give_feedback(article, 1)
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            feedback_row, text="👎 Dislike", width=80, height=30,
+            font=FONTS["button"], corner_radius=8, fg_color=t["error"],
+            command=lambda: self._give_feedback(article, -1)
+        ).pack(side="left")
+
+    def clear_search(self):
+        """Clear the search field and reset results."""
+        try:
+            self.search_bar.entry.delete(0, "end")
+            self._on_search("")
+        except Exception:
+            pass
+
+    def _give_feedback(self, article: dict, feedback: int):
+        """Store +1/-1 feedback for an article to train the scoring model."""
+        try:
+            db.save_article_feedback(article["id"], feedback)
+            label = "👍 Liked!" if feedback > 0 else "👎 Noted!"
+            # Refresh detail panel to reflect feedback was recorded
+            self._show_detail(article)
+        except Exception:
+            pass
+
     def _toggle_bookmark(self, article: dict):
         db.toggle_bookmark(article["id"])
         article["is_bookmarked"] = not article.get("is_bookmarked")

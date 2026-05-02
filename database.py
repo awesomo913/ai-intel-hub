@@ -95,6 +95,28 @@ def init_db() -> None:
                 file_path TEXT DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS email_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sent_at TEXT DEFAULT (datetime('now')),
+                to_addr TEXT NOT NULL,
+                subject TEXT DEFAULT '',
+                method TEXT DEFAULT 'smtp',
+                success INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS article_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id INTEGER REFERENCES articles(id) ON DELETE CASCADE,
+                feedback INTEGER NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS groundbreaker_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id INTEGER REFERENCES articles(id) ON DELETE CASCADE,
+                flagged_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source_id);
             CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
             CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at);
@@ -102,6 +124,9 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_articles_bookmarked ON articles(is_bookmarked);
             CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at);
             CREATE INDEX IF NOT EXISTS idx_articles_cat_score ON articles(category, relevance_score);
+            CREATE INDEX IF NOT EXISTS idx_feedback_article ON article_feedback(article_id);
+            CREATE INDEX IF NOT EXISTS idx_gb_history_article ON groundbreaker_history(article_id);
+            CREATE INDEX IF NOT EXISTS idx_email_history_sent ON email_history(sent_at);
         """)
         conn.commit()
 
@@ -451,5 +476,130 @@ def log_export(export_type: str, fmt: str, item_count: int, file_path: str = "")
             (export_type, fmt, item_count, file_path)
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# --- Email History ---
+
+def log_email_send(to_addr: str, subject: str, method: str, success: bool) -> None:
+    """Log an email or SMS send attempt."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO email_history (to_addr, subject, method, success) VALUES (?, ?, ?, ?)",
+            (to_addr, subject, method, int(success))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_email_history(limit: int = 10) -> list[dict]:
+    """Return the most recent send history entries."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM email_history ORDER BY sent_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# --- Article Feedback ---
+
+def save_article_feedback(article_id: int, feedback: int) -> None:
+    """Save +1 or -1 feedback for an article."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO article_feedback (article_id, feedback) VALUES (?, ?)",
+            (article_id, feedback)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_feedback_keywords(limit_articles: int = 50) -> tuple[list[str], list[str]]:
+    """Return (liked_keywords, disliked_keywords) extracted from feedback.
+
+    Looks at articles that received positive / negative feedback and pulls
+    the significant words from their titles to use as a scoring signal.
+    """
+    conn = get_connection()
+    try:
+        liked_rows = conn.execute(
+            """SELECT a.title FROM articles a
+               JOIN article_feedback f ON f.article_id = a.id
+               WHERE f.feedback > 0
+               ORDER BY f.created_at DESC LIMIT ?""",
+            (limit_articles,)
+        ).fetchall()
+        disliked_rows = conn.execute(
+            """SELECT a.title FROM articles a
+               JOIN article_feedback f ON f.article_id = a.id
+               WHERE f.feedback < 0
+               ORDER BY f.created_at DESC LIMIT ?""",
+            (limit_articles,)
+        ).fetchall()
+
+        stop = {"the", "a", "an", "and", "or", "in", "on", "of", "to", "for",
+                "is", "it", "that", "this", "was", "are", "be", "with", "by",
+                "from", "new", "how", "why", "what", "its", "will", "can"}
+
+        def _extract(rows):
+            words = []
+            for row in rows:
+                words += [w.lower() for w in row["title"].split()
+                          if len(w) > 3 and w.lower() not in stop]
+            return words
+
+        return (_extract(liked_rows), _extract(disliked_rows))
+    finally:
+        conn.close()
+
+
+# --- Groundbreaker History ---
+
+def log_groundbreaker(article_id: int) -> None:
+    """Record that an article was flagged as groundbreaker."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO groundbreaker_history (article_id) VALUES (?)", (article_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def was_groundbreaker_recent(article_id: int, hours: int = 6) -> bool:
+    """Return True if this article was already a groundbreaker within the given window."""
+    conn = get_connection()
+    try:
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        row = conn.execute(
+            "SELECT 1 FROM groundbreaker_history WHERE article_id = ? AND flagged_at >= ?",
+            (article_id, cutoff)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def any_groundbreaker_recent(hours: int = 6) -> bool:
+    """Return True if ANY article was flagged as groundbreaker within the given window."""
+    conn = get_connection()
+    try:
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        row = conn.execute(
+            "SELECT 1 FROM groundbreaker_history WHERE flagged_at >= ?",
+            (cutoff,)
+        ).fetchone()
+        return row is not None
     finally:
         conn.close()
