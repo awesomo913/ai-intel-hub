@@ -579,10 +579,11 @@ def was_groundbreaker_recent(article_id: int, hours: int = 6) -> bool:
     """Return True if this article was already a groundbreaker within the given window."""
     conn = get_connection()
     try:
-        cutoff = f"datetime('now', '-{hours} hours')"
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
         row = conn.execute(
-            f"SELECT 1 FROM groundbreaker_history WHERE article_id = ? AND flagged_at >= {cutoff}",
-            (article_id,)
+            "SELECT 1 FROM groundbreaker_history WHERE article_id = ? AND flagged_at >= ?",
+            (article_id, cutoff)
         ).fetchone()
         return row is not None
     finally:
@@ -593,9 +594,11 @@ def any_groundbreaker_recent(hours: int = 6) -> bool:
     """Return True if ANY article was flagged as groundbreaker within the given window."""
     conn = get_connection()
     try:
-        cutoff = f"datetime('now', '-{hours} hours')"
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
         row = conn.execute(
-            f"SELECT 1 FROM groundbreaker_history WHERE flagged_at >= {cutoff}"
+            "SELECT 1 FROM groundbreaker_history WHERE flagged_at >= ?",
+            (cutoff,)
         ).fetchone()
         return row is not None
     finally:

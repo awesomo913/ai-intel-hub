@@ -682,12 +682,8 @@ class AIIntelHub(ctk.CTk):
     def _escape_action(self):
         """Escape: clear search or return to feed."""
         feed = self._views.get("feed")
-        if feed and hasattr(feed, "search_bar"):
-            try:
-                feed.search_bar.entry.delete(0, "end")
-                feed._on_search("")
-            except Exception:
-                pass
+        if feed and hasattr(feed, "clear_search"):
+            feed.clear_search()
 
     def _refresh_current(self):
         for view in self._views.values():

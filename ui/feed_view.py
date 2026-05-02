@@ -343,6 +343,14 @@ class FeedView(ctk.CTkFrame):
             command=lambda: self._give_feedback(article, -1)
         ).pack(side="left")
 
+    def clear_search(self):
+        """Clear the search field and reset results."""
+        try:
+            self.search_bar.entry.delete(0, "end")
+            self._on_search("")
+        except Exception:
+            pass
+
     def _give_feedback(self, article: dict, feedback: int):
         """Store +1/-1 feedback for an article to train the scoring model."""
         try:

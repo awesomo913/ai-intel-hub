@@ -482,13 +482,21 @@ class EmailView(ctk.CTkScrollableFrame):
             return
         self._sms_status.configure(text="Sending...", text_color=self._theme["fg_muted"])
         self.update_idletasks()
-        success, msg = send_sms(phone, carrier)
-        color = self._theme["success"] if success else self._theme["error"]
-        icon = "✅" if success else "❌"
-        self._sms_status.configure(text=f"{icon} {msg}", text_color=color)
-        if self._show_toast:
-            self._show_toast(msg, "success" if success else "error")
-        self._refresh_history()
+
+        import threading as _threading
+
+        def _run():
+            success, msg = send_sms(phone, carrier)
+            color = self._theme["success"] if success else self._theme["error"]
+            icon = "✅" if success else "❌"
+            self.after(0, lambda: self._sms_status.configure(
+                text=f"{icon} {msg}", text_color=color
+            ))
+            if self._show_toast:
+                self.after(0, lambda: self._show_toast(msg, "success" if success else "error"))
+            self.after(0, self._refresh_history)
+
+        _threading.Thread(target=_run, daemon=True).start()
 
     def send_sms_alert(self):
         """Public entry-point for Ctrl+T shortcut."""

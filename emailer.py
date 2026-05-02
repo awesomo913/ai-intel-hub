@@ -28,7 +28,7 @@ SMTP_CONFIG_FILE = "email_config.json"
 KEYRING_SERVICE = "AIIntelHub_SMTP"
 
 # Email-to-SMS gateway templates (no new dependencies — uses existing SMTP)
-SMS_GATEWAYS: dict[str, str] = {
+SMS_GATEWAYS: dict[str, float] = {
     "AT&T":        "{number}@txt.att.net",
     "T-Mobile":    "{number}@tmomail.net",
     "Verizon":     "{number}@vtext.com",
@@ -41,6 +41,7 @@ SMS_GATEWAYS: dict[str, str] = {
 
 # Background timer for scheduled email (module-level so it persists)
 _schedule_timer: Optional[threading.Timer] = None
+_schedule_lock = threading.Lock()
 
 
 # --- Secure Credential Storage ---
@@ -322,7 +323,10 @@ def build_sms_body(max_chars: int = 160) -> str:
         msg = f"AI INTEL: {gb['title'][:80]} {gb['url']}"
     else:
         standouts = get_standouts(limit=1)
-        msg = f"AI: {standouts[0]['title'][:80]} {standouts[0]['url']}" if standouts else "AI Intel Hub: No high-score items right now."
+        if standouts:
+            msg = f"AI: {standouts[0]['title'][:80]} {standouts[0]['url']}"
+        else:
+            msg = "AI Intel Hub: No high-score items right now."
     return msg[:max_chars]
 
 
@@ -411,7 +415,7 @@ def send_via_smtp(to: str, subject: str, body: str,
             server.login(username, password)
             server.sendmail(from_addr, all_recipients, msg.as_string())
 
-        logger.info("Email sent to %s via SMTP", to)
+        logger.info("Email sent via SMTP (method=%s)", method)
         db.log_email_send(to, subject, method, success=True)
         return (True, f"Email sent to {to}")
     except smtplib.SMTPAuthenticationError:
@@ -447,9 +451,9 @@ def send_via_smtp_html(to: str, subject: str, html_body: str,
             msg["CC"] = cc
         msg["Subject"] = subject
 
-        # Plain text fallback
-        import re as _re
-        plain = _re.sub(r'<[^>]+>', '', html_body)
+        # Plain text fallback using BeautifulSoup for reliable HTML stripping
+        from bs4 import BeautifulSoup
+        plain = BeautifulSoup(html_body, "html.parser").get_text(separator="\n", strip=True)
         msg.attach(MIMEText(plain, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
 
@@ -462,7 +466,7 @@ def send_via_smtp_html(to: str, subject: str, html_body: str,
             server.login(username, password)
             server.sendmail(from_addr, all_recipients, msg.as_string())
 
-        logger.info("HTML email sent to %s via SMTP", to)
+        logger.info("HTML email sent via SMTP")
         db.log_email_send(to, subject, "smtp_html", success=True)
         return (True, f"HTML email sent to {to}")
     except smtplib.SMTPAuthenticationError:
@@ -522,17 +526,18 @@ def start_scheduled_email(schedule: str) -> None:
         except Exception:
             pass
 
-    if _schedule_timer is not None:
-        try:
-            _schedule_timer.cancel()
-        except Exception:
-            pass
+    with _schedule_lock:
+        if _schedule_timer is not None:
+            try:
+                _schedule_timer.cancel()
+            except Exception:
+                pass
 
-    if should_send_now:
-        _schedule_timer = threading.Timer(0, _send_and_reschedule)
-    else:
-        _schedule_timer = threading.Timer(interval, _send_and_reschedule)
+        if should_send_now:
+            _schedule_timer = threading.Timer(0, _send_and_reschedule)
+        else:
+            _schedule_timer = threading.Timer(interval, _send_and_reschedule)
 
-    _schedule_timer.daemon = True
-    _schedule_timer.start()
+        _schedule_timer.daemon = True
+        _schedule_timer.start()
     logger.info("Scheduled email started: %s (interval=%ds)", schedule, interval)

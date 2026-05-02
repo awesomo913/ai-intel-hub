@@ -162,18 +162,22 @@ def get_keyword_velocity(keyword: str, hours_back: int = 24) -> float:
         recent_start = (now - timedelta(hours=hours_back)).strftime("%Y-%m-%d %H:%M:%S")
         prior_start = (now - timedelta(hours=hours_back * 2)).strftime("%Y-%m-%d %H:%M:%S")
 
+        # Escape LIKE special characters to prevent pattern injection
+        safe_kw = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pattern = f"%{safe_kw}%"
+
         recent_count = conn.execute(
             """SELECT COUNT(*) FROM articles
-               WHERE (title LIKE ? OR summary LIKE ?)
+               WHERE (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')
                AND fetched_at >= ?""",
-            (f"%{keyword}%", f"%{keyword}%", recent_start)
+            (like_pattern, like_pattern, recent_start)
         ).fetchone()[0]
 
         prior_count = conn.execute(
             """SELECT COUNT(*) FROM articles
-               WHERE (title LIKE ? OR summary LIKE ?)
+               WHERE (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')
                AND fetched_at >= ? AND fetched_at < ?""",
-            (f"%{keyword}%", f"%{keyword}%", prior_start, recent_start)
+            (like_pattern, like_pattern, prior_start, recent_start)
         ).fetchone()[0]
 
         if prior_count == 0:
@@ -423,7 +427,7 @@ def get_groundbreaker(days: int = 7) -> dict | None:
     Falls back gracefully if no article meets all gates."""
     conn = db.get_connection()
     try:
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         fresh_cutoff = (datetime.now() - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
             """SELECT a.*, s.name as source_name FROM articles a
