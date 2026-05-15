@@ -3,7 +3,7 @@ Webhook URL stored securely in OS keychain (Windows Credential Manager,
 macOS Keychain, Linux Secret Service)."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import keyring
@@ -92,7 +92,7 @@ def build_groundbreaker_payload() -> Optional[dict]:
             {"name": "Score", "value": pct, "inline": True},
         ],
         "footer": {"text": "AI Intel Hub • Groundbreaker Alert"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     return {
@@ -160,7 +160,7 @@ def build_digest_payload(max_articles: int = 10) -> dict:
             {"name": "Active Sources", "value": str(stats.get("active_sources", 0)), "inline": True},
         ],
         "footer": {"text": "AI Intel Hub"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     return {
