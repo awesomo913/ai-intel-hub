@@ -95,6 +95,15 @@ def init_db() -> None:
                 file_path TEXT DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS discord_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sent_at TEXT DEFAULT (datetime('now')),
+                message_type TEXT NOT NULL,
+                article_count INTEGER DEFAULT 0,
+                success INTEGER DEFAULT 0,
+                error_msg TEXT DEFAULT ''
+            );
+
             CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source_id);
             CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
             CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at);
@@ -451,5 +460,34 @@ def log_export(export_type: str, fmt: str, item_count: int, file_path: str = "")
             (export_type, fmt, item_count, file_path)
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# --- Discord History ---
+
+def log_discord_send(message_type: str, article_count: int,
+                     success: bool, error_msg: str = "") -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO discord_history
+               (message_type, article_count, success, error_msg)
+               VALUES (?, ?, ?, ?)""",
+            (message_type, article_count, int(success), error_msg)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_discord_history(limit: int = 10) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM discord_history ORDER BY sent_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()

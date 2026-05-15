@@ -16,6 +16,7 @@ from .sources_view import SourcesView
 from .settings_view import SettingsView
 from .health_view import HealthView
 from .email_view import EmailView
+from .discord_view import DiscordView
 from ..config import AppConfig, load_config, save_config
 from .. import database as db
 from ..sources import get_default_sources
@@ -133,6 +134,7 @@ class AIIntelHub(ctk.CTk):
             ("feed", "\U0001F4F0 Articles", "Ctrl+1"),
             ("strategies", "\U0001F4A1 Strategies", "Ctrl+2"),
             ("email", "\U0001F4E7 Email", "Ctrl+M"),
+            ("discord", "\U0001F4AC Discord", "Ctrl+Shift+D"),
             ("export", "\U0001F4E4 Export", "Ctrl+E"),
             ("sources", "\U0001F310 Sources", "Ctrl+3"),
             ("health", "\U0001F3E5 Health & Logs", "Ctrl+H"),
@@ -287,6 +289,9 @@ class AIIntelHub(ctk.CTk):
             self.content, theme=t, show_toast=self._show_toast
         )
         self._views["email"] = EmailView(
+            self.content, theme=t, show_toast=self._show_toast
+        )
+        self._views["discord"] = DiscordView(
             self.content, theme=t, show_toast=self._show_toast
         )
         self._views["export"] = ExportView(
@@ -598,6 +603,7 @@ class AIIntelHub(ctk.CTk):
         self.bind("<Control-f>", lambda e: self._focus_search())
         self.bind("<Control-h>", lambda e: self._show_view("health"))
         self.bind("<Control-m>", lambda e: self._show_view("email"))
+        self.bind("<Control-Shift-D>", lambda e: self._show_view("discord"))
         self.bind("<Control-Key-1>", lambda e: self._show_view("feed"))
         self.bind("<Control-Key-2>", lambda e: self._show_view("strategies"))
         self.bind("<Control-Key-3>", lambda e: self._show_view("sources"))
