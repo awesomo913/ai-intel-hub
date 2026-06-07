@@ -13,3 +13,7 @@ config.json
 exports/
 data/
 .claude/
+build/
+dist/
+*.spec
+logs/

@@ -16,6 +16,7 @@ from .sources_view import SourcesView
 from .settings_view import SettingsView
 from .health_view import HealthView
 from .email_view import EmailView
+from .accounts_view import AccountsView
 from ..config import AppConfig, load_config, save_config
 from .. import database as db
 from ..sources import get_default_sources
@@ -23,6 +24,9 @@ from ..scraper import fetch_all_sources, scrape_github_trending, scrape_github_d
 from ..analyzer import score_all_unscored
 from ..session_manager import SessionTracker
 from ..perf_logger import log_event
+from ..api_server import start_server as _start_api_server
+from ..notification_service import check_and_notify, mark_banner_seen
+from ..memory_bridge import flush_hints_to_standout_memory
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,9 @@ class AIIntelHub(ctk.CTk):
         if self._config.auto_refresh_enabled:
             self._schedule_auto_refresh()
 
+        # Start local API server (for Claude sessions / scripts to query)
+        self.after(1500, lambda: _start_api_server(port=7891))
+
         # Graceful shutdown
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -132,6 +139,7 @@ class AIIntelHub(ctk.CTk):
             ("dashboard", "\U0001F4CA Dashboard", "Ctrl+D"),
             ("feed", "\U0001F4F0 Articles", "Ctrl+1"),
             ("strategies", "\U0001F4A1 Strategies", "Ctrl+2"),
+            ("accounts", "\U0001F465 Accounts", "Ctrl+A"),
             ("email", "\U0001F4E7 Email", "Ctrl+M"),
             ("export", "\U0001F4E4 Export", "Ctrl+E"),
             ("sources", "\U0001F310 Sources", "Ctrl+3"),
@@ -270,8 +278,8 @@ class AIIntelHub(ctk.CTk):
                 label = f"Health: {score}/100"
             self.health_dot.configure(text_color=color)
             self.health_label.configure(text=label)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Health indicator update failed: %s", exc)
         # Refresh every 5 minutes
         self.after(300000, self._update_health_indicator)
 
@@ -284,6 +292,9 @@ class AIIntelHub(ctk.CTk):
         )
         self._views["feed"] = FeedView(self.content, theme=t)
         self._views["strategies"] = StrategyView(
+            self.content, theme=t, show_toast=self._show_toast
+        )
+        self._views["accounts"] = AccountsView(
             self.content, theme=t, show_toast=self._show_toast
         )
         self._views["email"] = EmailView(
@@ -409,10 +420,10 @@ class AIIntelHub(ctk.CTk):
         for view in self._views.values():
             try:
                 view.refresh()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("View refresh failed: %s", exc)
 
-        # Highlight top standout article
+        # Highlight top standout article + fire breakthrough notifications
         if total > 0:
             try:
                 from ..analyzer import get_standouts
@@ -421,8 +432,26 @@ class AIIntelHub(ctk.CTk):
                     self._show_toast(
                         f"Top: {standouts[0]['title'][:60]}", "info"
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Standout toast failed: %s", exc)
+
+            # Windows toast + terminal banner for breakthrough-level articles
+            try:
+                recent = db.get_articles(limit=50)
+                fired = check_and_notify(recent or [], threshold=0.85)
+                if fired:
+                    logger.info("Fired %d breakthrough notifications", fired)
+            except Exception as exc:
+                logger.warning("Notification check failed: %s", exc)
+
+            # Write top picks to Claude memory hints
+            def _flush_hints():
+                try:
+                    flush_hints_to_standout_memory(top_n=3)
+                except Exception as exc:
+                    logger.warning("flush_hints_to_standout_memory failed: %s", exc)
+
+            threading.Thread(target=_flush_hints, daemon=True).start()
 
         # Update health
         self._update_health_indicator()
@@ -594,6 +623,7 @@ class AIIntelHub(ctk.CTk):
     def _bind_shortcuts(self):
         self.bind("<Control-r>", lambda e: self._fetch_all())
         self.bind("<Control-d>", lambda e: self._show_view("dashboard"))
+        self.bind("<Control-a>", lambda e: self._show_view("accounts"))
         self.bind("<Control-e>", lambda e: self._show_view("export"))
         self.bind("<Control-f>", lambda e: self._focus_search())
         self.bind("<Control-h>", lambda e: self._show_view("health"))
@@ -619,8 +649,8 @@ class AIIntelHub(ctk.CTk):
         if not self._is_closing:
             try:
                 self.after(ms, callback)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("_safe_after skipped (window closed?): %s", exc)
 
     def _on_close(self):
         self._is_closing = True
@@ -631,8 +661,8 @@ class AIIntelHub(ctk.CTk):
             w, h = size.split("x")
             self._config.window_width = int(w)
             self._config.window_height = int(h)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Could not parse window geometry: %s", exc)
         save_config(self._config)
 
         # Save session
