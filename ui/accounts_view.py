@@ -58,7 +58,7 @@ class ProfileCard(ctk.CTkFrame):
         ctk.CTkLabel(
             self,
             text=p["display_name"] or "Unknown",
-            font=FONTS["subheading"],
+            font=FONTS["heading_sm"],
             text_color=t["fg"],
         ).pack()
 
@@ -180,7 +180,10 @@ class AccountsView(ctk.CTkFrame):
 
     def refresh(self):
         """Called by the main app whenever this view is shown."""
-        if not self._profiles:
+        if self._profiles:
+            # Re-render existing profiles (handles grid remount after tab switch)
+            self._render_profiles(self._profiles)
+        else:
             self._load_profiles()
 
     def _load_profiles(self):
