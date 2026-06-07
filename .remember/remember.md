@@ -1,15 +1,14 @@
 # Handoff
 
 ## State
-Accounts tab verified working (2 profile cards render — Your Chrome + Elyanna, all 6 quick-launch buttons). Bug fixed: refresh() now re-renders on every tab switch (commit 44edc65, main). build_exe.bat created in project root but NOT yet run — exe stale. Hermes agent-reach SKILL.md installed at AppData/Local/hermes/skills/agent-reach/.
+Accounts tab fully working — FONTS["subheading"] KeyError fixed (→ heading_sm), 2 Chrome profile cards render correctly. exe built: Desktop/My Apps/AIIntelHub.exe (50MB, windowed). build_exe.bat committed. HEAD f9679f1 on main, pushed.
 
 ## Next
-1. Run `build_exe.bat` in `C:\Users\computer\Desktop\AI\ai_intel_hub` → Desktop\My Apps\AIIntelHub.exe
-2. Build **Skills/Config Visual Dashboard** — new CustomTkinter app, dark UI, scans Hermes skills + Claude skills + Hermes config.yaml, card grid with status dots, at Desktop/AI/skills_dashboard/ + Desktop/My Apps/SkillsDashboard.exe
+1. Smoke-test exe: launch `Desktop/My Apps/AIIntelHub.exe`, verify Accounts tab shows 2 cards, no crash
+2. Run "Refresh All Feeds" to test notifications (toast fires at ≥0.85 relevance score)
+3. Optional: add port 7891 "already-running" guard in api_server.py
 
 ## Context
-- Skills dashboard scan targets: `AppData/Local/hermes/skills/` (Hermes), `~/.claude/skills/` (Claude Code), `AppData/Local/hermes/config.yaml`
-- Each skill card shows: name, description, tags, last-modified, installed status (green/yellow/red dot)
-- Dark theme matching ai_intel_hub aesthetic — search bar, filterable by source (Hermes vs Claude)
-- agent-reach SKILL has corrections baked in: `bird` not `twitter`, RSS+Weibo added, alt-account security note
-- API server still on port 7891: `curl http://localhost:7891/feed?limit=5`
+- Run app from parent dir: `cd Desktop/AI && python -m ai_intel_hub` (relative imports break if run from inside project dir)
+- Two instances were running mid-session (PIDs 32660/34508) — killed before verify. Check for stale instances before launching.
+- QUICK_LAUNCH_TARGETS hardcoded at accounts_view.py:15-22 (low priority to move to config)
