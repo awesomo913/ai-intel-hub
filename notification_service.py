@@ -24,14 +24,16 @@ def send_windows_toast(title: str, message: str, duration: int = 10) -> None:
     Uses PowerShell's Windows.UI.Notifications runtime API — no extra packages
     required. Falls back silently if PowerShell is unavailable.
     """
+    safe_title = title.replace("'", "''").replace("\r", "").replace("\n", " ")[:80]
+    safe_msg = message[:120].replace("'", "''").replace("\r", "").replace("\n", " ")
     ps_script = f"""
 $appId = 'AI Intel Hub'
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
     [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-$template.SelectSingleNode('//text[@id=1]').InnerText = '{title.replace("'", "`'")}'
-$template.SelectSingleNode('//text[@id=2]').InnerText = '{message[:120].replace("'", "`'")}'
+$template.SelectSingleNode('//text[@id=1]').InnerText = '{safe_title}'
+$template.SelectSingleNode('//text[@id=2]').InnerText = '{safe_msg}'
 $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
 """
